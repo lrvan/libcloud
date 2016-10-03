@@ -4,6 +4,73 @@
 Changes in current version of Apache Libcloud
 ---------------------------------------------
 
+Compute
+~~~~~~~
+
+- [google compute] Add "WINDOWS" guestOsFeatures option.
+  (GITHUB-861)
+  [Max Illfelder]
+
+- When creating volumes on OpenStack with defaults for `location` or `volume_type`,
+  newer OpenStack versions would throw errors. The OpenStack driver will now only
+  post those arguments if non-`NoneType`.
+  (GITHUB-857)
+  [Allard Hoeve]
+
+- When fetching the node details of a non-existing node, OpenStack would raise a
+  `BaseHTTPError` instead of returning `None`, as was intended. Fixed tests and code.
+  (GITHUB-864)
+
+- Added `ex_stop_node` to the OpenStack driver.
+  (GITHUB-865)
+
+- When creating volume snapshot, the arguments `name` and `description` are truely
+  optional when working with newer OpenStack versions. The OpenStack driver will now
+  only post thost arguments if they are non-`NoneType`.
+  (GITHUB-866)
+
+- StorageVolumeSnapshot now has an attribute `name` that has the name of the snapshot
+  if the provider supports it. This used to be `.extra['name']`, but that is inconsistent
+  with `Node` and `StorageVolume`. The `extra` dict still holds `name` for backwards
+  compatibility.
+  (GITHUB-867)
+  [Allard Hoeve]
+
+Container
+~~~~~~~~~
+
+- Fixed bug in Docker util library for fetching images from the docker hub API. API
+  was returning 301 and redirects were not being followed.
+  (GITHUB-862)
+  [Anthony Shaw]
+
+Load Balancer
+~~~~~~~~~~~~~
+
+- Added fetch tags support in elb driver
+  (GITHUB-848)
+  [Anton Kozyrev]
+
+Storage
+~~~~~~~
+
+- Added storage permissions for Google Cloud Storage
+  (GITHUB-860)
+  [Scott Crunkleton]
+
+Changes in Apache Libcloud 1.2.1
+--------------------------------
+
+Backup
+~~~~~~
+
+- Fix issue enabling backups on Dimension Data driver
+  (GITHUB-858)
+  [Mark Maglana][Jeff Dunham][Anthony Shaw]
+
+Changes in Apache Libcloud 1.2.0
+--------------------------------
+
 General
 ~~~~~~~
 
@@ -16,6 +83,26 @@ General
 
 Compute
 ~~~~~~~
+
+- [gce] Fix image undeprecation in GCE
+  (GITHUB-852)
+  [Max Illfelder]
+
+- [gce] Added Managed Instance Groups
+  (GITHUB-842)
+  [Tom Melendez]
+
+- [gce] Allow undeprecation of an image.
+  (GITHUB-851)
+  [Max Illfelder]
+
+- [cloudstack] BUGFIX Values with wildcards failed signature validation
+  (GITHUB-846)
+  [Ronald van Zantvoot]
+
+- [cloudstack] Added StorageState-Migrating to the cloudstack driver.
+  (GITHUB-847)
+  [Marc-Aurèle Brothier]
 
 - [google compute] Update copy image logic to match create image.
   (GITHUB-828)

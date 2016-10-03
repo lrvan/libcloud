@@ -682,6 +682,11 @@ class EC2Tests(LibcloudTestCase, TestCaseMixin):
         node = Node('i-4382922a', None, None, None, None, self.driver)
         self.driver.ex_delete_tags(node, {'sample': 'tag'})
 
+    def test_ex_delete_tags2(self):
+        node = Node('i-4382922a', None, None, None, None, self.driver)
+        self.driver.ex_create_tags(node, {'sample': 'another tag'})
+        self.driver.ex_delete_tags(node, {'sample': None})
+
     def test_ex_describe_addresses_for_node(self):
         node1 = Node('i-4382922a', None, None, None, None, self.driver)
         ip_addresses1 = self.driver.ex_describe_addresses_for_node(node1)
@@ -898,6 +903,7 @@ class EC2Tests(LibcloudTestCase, TestCaseMixin):
         self.assertEqual('Daily Backup', snaps[0].extra['description'])
 
         self.assertEqual('snap-18349159', snaps[1].id)
+        self.assertEqual('DB Backup 1', snaps[1].name)
         self.assertEqual(VolumeSnapshotState.AVAILABLE, snaps[1].state)
         self.assertEqual('vol-b5a2c1v9', snaps[1].extra['volume_id'])
         self.assertEqual(15, snaps[1].size)

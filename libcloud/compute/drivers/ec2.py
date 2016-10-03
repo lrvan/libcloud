@@ -4310,7 +4310,8 @@ class BaseEC2NodeDriver(NodeDriver):
                   'ResourceId.0': resource.id}
         for i, key in enumerate(tags):
             params['Tag.%d.Key' % i] = key
-            params['Tag.%d.Value' % i] = tags[key]
+            if tags[key] is not None:
+                params['Tag.%d.Value' % i] = tags[key]
 
         res = self.connection.request(self.path,
                                       params=params.copy()).object
@@ -5600,7 +5601,8 @@ class BaseEC2NodeDriver(NodeDriver):
                               driver=self,
                               extra=extra,
                               created=created,
-                              state=state)
+                              state=state,
+                              name=name)
 
     def _to_key_pairs(self, elems):
         key_pairs = [self._to_key_pair(elem=elem) for elem in elems]
