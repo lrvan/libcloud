@@ -26,6 +26,9 @@ from libcloud.common.types import InvalidCredsError
 from libcloud.common.dimensiondata import DimensionDataAPIException, NetworkDomainServicePlan
 from libcloud.common.dimensiondata import DimensionDataServerCpuSpecification, DimensionDataServerDisk, DimensionDataServerVMWareTools
 from libcloud.common.dimensiondata import DimensionDataTag, DimensionDataTagKey
+from libcloud.common.dimensiondata import DimensionDataIpAddress, \
+    DimensionDataIpAddressList, DimensionDataChildIpAddressList, \
+    DimensionDataPortList, DimensionDataPort, DimensionDataChildPortList
 from libcloud.common.dimensiondata import TYPES_URN
 from libcloud.compute.drivers.dimensiondata import DimensionDataNodeDriver as DimensionData
 from libcloud.compute.base import Node, NodeAuthPassword, NodeLocation
@@ -33,7 +36,7 @@ from libcloud.test import MockHttp, unittest, MockRawResponse, StorageMockHttp
 from libcloud.test.compute import TestCaseMixin
 from libcloud.test.file_fixtures import ComputeFileFixtures
 from libcloud.test.secrets import DIMENSIONDATA_PARAMS
-from libcloud.utils.xml import fixxpath, findtext
+from libcloud.utils.xml import fixxpath, findtext, findall
 
 
 class DimensionDataTests(unittest.TestCase, TestCaseMixin):
@@ -132,7 +135,7 @@ class DimensionDataTests(unittest.TestCase, TestCaseMixin):
         self.assertTrue(isinstance(node_list_generator, GeneratorType))
 
     # We're making sure here the filters make it to the URL
-    # See _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_ALLFILTERS for asserts
+    # See  _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_ALLFILTERS for asserts
     def test_list_nodes_response_strings_ALLFILTERS(self):
         DimensionDataMockHttp.type = 'ALLFILTERS'
         ret = self.driver.list_nodes(ex_location='fake_loc', ex_name='fake_name',
@@ -745,6 +748,48 @@ class DimensionDataTests(unittest.TestCase, TestCaseMixin):
         rule = self.driver.ex_create_firewall_rule(net, specific_source_ip_rule, 'FIRST')
         self.assertEqual(rule.id, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
 
+    def test_ex_create_firewall_rule_with_source_ip(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rules = self.driver.ex_list_firewall_rules(net)
+        specific_source_ip_rule = \
+            list(filter(lambda x: x.name == 'SpecificSourceIP',
+                        rules))[0]
+        specific_source_ip_rule.source.any_ip = False
+        specific_source_ip_rule.source.ip_address = '10.0.0.1'
+        specific_source_ip_rule.source.ip_prefix_size = '15'
+        rule = self.driver.ex_create_firewall_rule(net,
+                                                   specific_source_ip_rule,
+                                                   'FIRST')
+        self.assertEqual(rule.id, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+
+    def test_ex_create_firewall_rule_with_any_ip(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rules = self.driver.ex_list_firewall_rules(net)
+        specific_source_ip_rule = \
+            list(filter(lambda x: x.name == 'SpecificSourceIP',
+                        rules))[0]
+        specific_source_ip_rule.source.any_ip = True
+        rule = self.driver.ex_create_firewall_rule(net,
+                                                   specific_source_ip_rule,
+                                                   'FIRST')
+        self.assertEqual(rule.id, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+
+    def test_ex_create_firewall_rule_ip_prefix_size(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_list_firewall_rules(net)[0]
+        rule.source.address_list_id = None
+        rule.source.any_ip = False
+        rule.source.ip_address = '10.2.1.1'
+        rule.source.ip_prefix_size = '10'
+        rule.destination.address_list_id = None
+        rule.destination.any_ip = False
+        rule.destination.ip_address = '10.0.0.1'
+        rule.destination.ip_prefix_size = '20'
+        self.driver.ex_create_firewall_rule(net, rule, 'LAST')
+
     def test_ex_create_firewall_rule_address_list(self):
         net = self.driver.ex_get_network_domain('8cdfd607-f429-4df6-9352-162cfc0891be')
         rule = self.driver.ex_list_firewall_rules(net)[0]
@@ -757,6 +802,18 @@ class DimensionDataTests(unittest.TestCase, TestCaseMixin):
         rule = self.driver.ex_list_firewall_rules(net)[0]
         rule.source.port_list_id = '12345'
         rule.destination.port_list_id = '12345'
+        self.driver.ex_create_firewall_rule(net, rule, 'LAST')
+
+    def test_ex_create_firewall_rule_port(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_list_firewall_rules(net)[0]
+        rule.source.port_list_id = None
+        rule.source.port_begin = '8000'
+        rule.source.port_end = '8005'
+        rule.destination.port_list_id = None
+        rule.destination.port_begin = '7000'
+        rule.destination.port_end = '7005'
         self.driver.ex_create_firewall_rule(net, rule, 'LAST')
 
     def test_ex_create_firewall_rule_ALL_VALUES(self):
@@ -805,6 +862,146 @@ class DimensionDataTests(unittest.TestCase, TestCaseMixin):
         rule = self.driver.ex_get_firewall_rule(net, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
         result = self.driver.ex_delete_firewall_rule(rule)
         self.assertTrue(result)
+
+    def test_ex_edit_firewall_rule(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_get_firewall_rule(
+            net, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+        rule.source.any_ip = True
+        result = self.driver.ex_edit_firewall_rule(rule=rule, position='LAST')
+        self.assertTrue(result)
+
+    def test_ex_edit_firewall_rule_source_ipaddresslist(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_get_firewall_rule(
+            net, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+        rule.source.address_list_id = '802abc9f-45a7-4efb-9d5a-810082368222'
+        rule.source.any_ip = False
+        rule.source.ip_address = '10.0.0.1'
+        rule.source.ip_prefix_size = 10
+        result = self.driver.ex_edit_firewall_rule(rule=rule, position='LAST')
+        self.assertTrue(result)
+
+    def test_ex_edit_firewall_rule_destination_ipaddresslist(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_get_firewall_rule(
+            net, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+        rule.destination.address_list_id = '802abc9f-45a7-4efb-9d5a-810082368222'
+        rule.destination.any_ip = False
+        rule.destination.ip_address = '10.0.0.1'
+        rule.destination.ip_prefix_size = 10
+        result = self.driver.ex_edit_firewall_rule(rule=rule, position='LAST')
+        self.assertTrue(result)
+
+    def test_ex_edit_firewall_rule_destination_ipaddress(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_get_firewall_rule(
+            net, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+        rule.source.address_list_id = None
+        rule.source.any_ip = False
+        rule.source.ip_address = '10.0.0.1'
+        rule.source.ip_prefix_size = '10'
+        result = self.driver.ex_edit_firewall_rule(rule=rule, position='LAST')
+        self.assertTrue(result)
+
+    def test_ex_edit_firewall_rule_source_ipaddress(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_get_firewall_rule(
+            net, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+        rule.destination.address_list_id = None
+        rule.destination.any_ip = False
+        rule.destination.ip_address = '10.0.0.1'
+        rule.destination.ip_prefix_size = '10'
+        result = self.driver.ex_edit_firewall_rule(rule=rule, position='LAST')
+        self.assertTrue(result)
+
+    def test_ex_edit_firewall_rule_with_relative_rule(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_get_firewall_rule(
+            net, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+        placement_rule = self.driver.ex_list_firewall_rules(
+            network_domain=net)[-1]
+        result = self.driver.ex_edit_firewall_rule(
+            rule=rule, position='BEFORE',
+            relative_rule_for_position=placement_rule)
+        self.assertTrue(result)
+
+    def test_ex_edit_firewall_rule_with_relative_rule_by_name(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_get_firewall_rule(
+            net, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+        placement_rule = self.driver.ex_list_firewall_rules(
+            network_domain=net)[-1]
+        result = self.driver.ex_edit_firewall_rule(
+            rule=rule, position='BEFORE',
+            relative_rule_for_position=placement_rule.name)
+        self.assertTrue(result)
+
+    def test_ex_edit_firewall_rule_source_portlist(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_get_firewall_rule(
+            net, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+        rule.source.port_list_id = '802abc9f-45a7-4efb-9d5a-810082368222'
+        result = self.driver.ex_edit_firewall_rule(rule=rule, position='LAST')
+        self.assertTrue(result)
+
+    def test_ex_edit_firewall_rule_source_port(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_get_firewall_rule(
+            net, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+        rule.source.port_list_id = None
+        rule.source.port_begin = '3'
+        rule.source.port_end = '10'
+        result = self.driver.ex_edit_firewall_rule(rule=rule, position='LAST')
+        self.assertTrue(result)
+
+    def test_ex_edit_firewall_rule_destination_portlist(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_get_firewall_rule(
+            net, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+        rule.destination.port_list_id = '802abc9f-45a7-4efb-9d5a-810082368222'
+        result = self.driver.ex_edit_firewall_rule(rule=rule, position='LAST')
+        self.assertTrue(result)
+
+    def test_ex_edit_firewall_rule_destination_port(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_get_firewall_rule(
+            net, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+        rule.destination.port_list_id = None
+        rule.destination.port_begin = '3'
+        rule.destination.port_end = '10'
+        result = self.driver.ex_edit_firewall_rule(rule=rule, position='LAST')
+        self.assertTrue(result)
+
+    def test_ex_edit_firewall_rule_invalid_position_fail(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_get_firewall_rule(
+            net, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+        with self.assertRaises(ValueError):
+            self.driver.ex_edit_firewall_rule(rule=rule, position='BEFORE')
+
+    def test_ex_edit_firewall_rule_invalid_position_relative_rule_fail(self):
+        net = self.driver.ex_get_network_domain(
+            '8cdfd607-f429-4df6-9352-162cfc0891be')
+        rule = self.driver.ex_get_firewall_rule(
+            net, 'd0a20f59-77b9-4f28-a63b-e58496b73a6c')
+        relative_rule = self.driver.ex_list_firewall_rules(
+            network_domain=net)[-1]
+        with self.assertRaises(ValueError):
+            self.driver.ex_edit_firewall_rule(rule=rule, position='FIRST',
+                                              relative_rule_for_position=relative_rule)
 
     def test_ex_create_nat_rule(self):
         net = self.driver.ex_get_network_domain('8cdfd607-f429-4df6-9352-162cfc0891be')
@@ -1185,6 +1382,376 @@ class DimensionDataTests(unittest.TestCase, TestCaseMixin):
         self.assertEqual(len(report_content), 42)
         self.assertEqual(len(report_content[0]), 4)
 
+    def test_audit_log_report(self):
+        report = self.driver.ex_audit_log_report('2016-06-01', '2016-06-30')
+        report_content = report
+        self.assertEqual(len(report_content), 25)
+        self.assertEqual(report_content[2][2], 'OEC_SYSTEM')
+
+    def test_ex_list_ip_address_list(self):
+        net_domain = self.driver.ex_list_network_domains()[0]
+        ip_list = self.driver.ex_list_ip_address_list(
+            ex_network_domain=net_domain)
+        self.assertTrue(isinstance(ip_list, list))
+        self.assertEqual(len(ip_list), 4)
+        self.assertTrue(isinstance(ip_list[0].name, str))
+        self.assertTrue(isinstance(ip_list[0].description, str))
+        self.assertTrue(isinstance(ip_list[0].ip_version, str))
+        self.assertTrue(isinstance(ip_list[0].state, str))
+        self.assertTrue(isinstance(ip_list[0].create_time, str))
+        self.assertTrue(isinstance(ip_list[0].child_ip_address_lists, list))
+        self.assertEqual(len(ip_list[1].child_ip_address_lists), 1)
+        self.assertTrue(isinstance(ip_list[1].child_ip_address_lists[0].name,
+                                   str))
+
+    def test_ex_get_ip_address_list(self):
+        net_domain = self.driver.ex_list_network_domains()[0]
+        DimensionDataMockHttp.type = 'FILTERBYNAME'
+        ip_list = self.driver.ex_get_ip_address_list(
+            ex_network_domain=net_domain.id,
+            ex_ip_address_list_name='Test_IP_Address_List_3')
+        self.assertTrue(isinstance(ip_list, list))
+        self.assertEqual(len(ip_list), 1)
+        self.assertTrue(isinstance(ip_list[0].name, str))
+        self.assertTrue(isinstance(ip_list[0].description, str))
+        self.assertTrue(isinstance(ip_list[0].ip_version, str))
+        self.assertTrue(isinstance(ip_list[0].state, str))
+        self.assertTrue(isinstance(ip_list[0].create_time, str))
+        ips = ip_list[0].ip_address_collection
+        self.assertEqual(len(ips), 3)
+        self.assertTrue(isinstance(ips[0].begin, str))
+        self.assertTrue(isinstance(ips[0].prefix_size, str))
+        self.assertTrue(isinstance(ips[2].end, str))
+
+    def test_ex_create_ip_address_list_FAIL(self):
+        net_domain = self.driver.ex_list_network_domains()[0]
+
+        with self.assertRaises(TypeError):
+            self.driver.ex_create_ip_address_list(
+                ex_network_domain=net_domain.id)
+
+    def test_ex_create_ip_address_list(self):
+        name = "Test_IP_Address_List_3"
+        description = "Test Description"
+        ip_version = "IPV4"
+        child_ip_address_list_id = '0291ef78-4059-4bc1-b433-3f6ad698dc41'
+        child_ip_address_list = DimensionDataChildIpAddressList(
+            id=child_ip_address_list_id,
+            name="test_child_ip_addr_list")
+        net_domain = self.driver.ex_list_network_domains()[0]
+        ip_address_1 = DimensionDataIpAddress(begin='190.2.2.100')
+        ip_address_2 = DimensionDataIpAddress(begin='190.2.2.106',
+                                              end='190.2.2.108')
+        ip_address_3 = DimensionDataIpAddress(begin='190.2.2.0',
+                                              prefix_size='24')
+        ip_address_collection = [ip_address_1, ip_address_2,
+                                 ip_address_3]
+
+        # Create IP Address List
+        success = self.driver.ex_create_ip_address_list(
+            ex_network_domain=net_domain, name=name,
+            ip_version=ip_version, description=description,
+            ip_address_collection=ip_address_collection,
+            child_ip_address_list=child_ip_address_list)
+
+        self.assertTrue(success)
+
+    def test_ex_create_ip_address_list_STR(self):
+        name = "Test_IP_Address_List_3"
+        description = "Test Description"
+        ip_version = "IPV4"
+        child_ip_address_list_id = '0291ef78-4059-4bc1-b433-3f6ad698dc41'
+        net_domain = self.driver.ex_list_network_domains()[0]
+        ip_address_1 = DimensionDataIpAddress(begin='190.2.2.100')
+        ip_address_2 = DimensionDataIpAddress(begin='190.2.2.106',
+                                              end='190.2.2.108')
+        ip_address_3 = DimensionDataIpAddress(begin='190.2.2.0',
+                                              prefix_size='24')
+        ip_address_collection = [ip_address_1, ip_address_2,
+                                 ip_address_3]
+
+        # Create IP Address List
+        success = self.driver.ex_create_ip_address_list(
+            ex_network_domain=net_domain.id, name=name,
+            ip_version=ip_version, description=description,
+            ip_address_collection=ip_address_collection,
+            child_ip_address_list=child_ip_address_list_id)
+
+        self.assertTrue(success)
+
+    def test_ex_edit_ip_address_list(self):
+        ip_address_1 = DimensionDataIpAddress(begin='190.2.2.111')
+        ip_address_collection = [ip_address_1]
+
+        child_ip_address_list = DimensionDataChildIpAddressList(
+            id='2221ef78-4059-4bc1-b433-3f6ad698dc41',
+            name="test_child_ip_address_list edited")
+
+        ip_address_list = DimensionDataIpAddressList(
+            id='1111ef78-4059-4bc1-b433-3f6ad698d111',
+            name="test ip address list edited",
+            ip_version="IPv4", description="test",
+            ip_address_collection=ip_address_collection,
+            child_ip_address_lists=child_ip_address_list,
+            state="NORMAL",
+            create_time='2015-09-29T02:49:45'
+        )
+
+        success = self.driver.ex_edit_ip_address_list(
+            ex_ip_address_list=ip_address_list,
+            description="test ip address list",
+            ip_address_collection=ip_address_collection,
+            child_ip_address_lists=child_ip_address_list
+        )
+
+        self.assertTrue(success)
+
+    def test_ex_edit_ip_address_list_STR(self):
+        ip_address_1 = DimensionDataIpAddress(begin='190.2.2.111')
+        ip_address_collection = [ip_address_1]
+
+        child_ip_address_list = DimensionDataChildIpAddressList(
+            id='2221ef78-4059-4bc1-b433-3f6ad698dc41',
+            name="test_child_ip_address_list edited")
+
+        success = self.driver.ex_edit_ip_address_list(
+            ex_ip_address_list='84e34850-595d- 436e-a885-7cd37edb24a4',
+            description="test ip address list",
+            ip_address_collection=ip_address_collection,
+            child_ip_address_lists=child_ip_address_list
+        )
+
+        self.assertTrue(success)
+
+    def test_ex_delete_ip_address_list(self):
+        child_ip_address_list = DimensionDataChildIpAddressList(
+            id='2221ef78-4059-4bc1-b433-3f6ad698dc41',
+            name="test_child_ip_address_list edited")
+
+        ip_address_list = DimensionDataIpAddressList(
+            id='1111ef78-4059-4bc1-b433-3f6ad698d111',
+            name="test ip address list edited",
+            ip_version="IPv4", description="test",
+            ip_address_collection=None,
+            child_ip_address_lists=child_ip_address_list,
+            state="NORMAL",
+            create_time='2015-09-29T02:49:45'
+        )
+
+        success = self.driver.ex_delete_ip_address_list(
+            ex_ip_address_list=ip_address_list)
+        self.assertTrue(success)
+
+    def test_ex_delete_ip_address_list_STR(self):
+        success = self.driver.ex_delete_ip_address_list(
+            ex_ip_address_list='111ef78-4059-4bc1-b433-3f6ad698d111')
+        self.assertTrue(success)
+
+    def test_ex_list_portlist(self):
+        net_domain = self.driver.ex_list_network_domains()[0]
+        portlist = self.driver.ex_list_portlist(
+            ex_network_domain=net_domain)
+        self.assertTrue(isinstance(portlist, list))
+        self.assertEqual(len(portlist), 3)
+        self.assertTrue(isinstance(portlist[0].name, str))
+        self.assertTrue(isinstance(portlist[0].description, str))
+        self.assertTrue(isinstance(portlist[0].state, str))
+        self.assertTrue(isinstance(portlist[0].port_collection, list))
+        self.assertTrue(isinstance(portlist[0].port_collection[0].begin, str))
+        self.assertTrue(isinstance(portlist[0].port_collection[0].end, str))
+        self.assertTrue(isinstance(portlist[0].child_portlist_list, list))
+        self.assertTrue(isinstance(portlist[0].child_portlist_list[0].id,
+                                   str))
+        self.assertTrue(isinstance(portlist[0].child_portlist_list[0].name,
+                                   str))
+        self.assertTrue(isinstance(portlist[0].create_time, str))
+
+    def test_ex_get_port_list(self):
+        net_domain = self.driver.ex_list_network_domains()[0]
+
+        portlist_id = self.driver.ex_list_portlist(
+            ex_network_domain=net_domain)[0].id
+
+        portlist = self.driver.ex_get_portlist(
+            ex_portlist_id=portlist_id)
+        self.assertTrue(isinstance(portlist, DimensionDataPortList))
+
+        self.assertTrue(isinstance(portlist.name, str))
+        self.assertTrue(isinstance(portlist.description, str))
+        self.assertTrue(isinstance(portlist.state, str))
+        self.assertTrue(isinstance(portlist.port_collection, list))
+        self.assertTrue(isinstance(portlist.port_collection[0].begin, str))
+        self.assertTrue(isinstance(portlist.port_collection[0].end, str))
+        self.assertTrue(isinstance(portlist.child_portlist_list, list))
+        self.assertTrue(isinstance(portlist.child_portlist_list[0].id,
+                                   str))
+        self.assertTrue(isinstance(portlist.child_portlist_list[0].name,
+                                   str))
+        self.assertTrue(isinstance(portlist.create_time, str))
+
+    def test_ex_get_portlist_STR(self):
+        net_domain = self.driver.ex_list_network_domains()[0]
+
+        portlist = self.driver.ex_list_portlist(
+            ex_network_domain=net_domain)[0]
+
+        port_list = self.driver.ex_get_portlist(
+            ex_portlist_id=portlist.id)
+        self.assertTrue(isinstance(port_list, DimensionDataPortList))
+
+        self.assertTrue(isinstance(port_list.name, str))
+        self.assertTrue(isinstance(port_list.description, str))
+        self.assertTrue(isinstance(port_list.state, str))
+        self.assertTrue(isinstance(port_list.port_collection, list))
+        self.assertTrue(isinstance(port_list.port_collection[0].begin, str))
+        self.assertTrue(isinstance(port_list.port_collection[0].end, str))
+        self.assertTrue(isinstance(port_list.child_portlist_list, list))
+        self.assertTrue(isinstance(port_list.child_portlist_list[0].id,
+                                   str))
+        self.assertTrue(isinstance(port_list.child_portlist_list[0].name,
+                                   str))
+        self.assertTrue(isinstance(port_list.create_time, str))
+
+    def test_ex_create_portlist_NOCHILDPORTLIST(self):
+        name = "Test_Port_List"
+        description = "Test Description"
+
+        net_domain = self.driver.ex_list_network_domains()[0]
+
+        port_1 = DimensionDataPort(begin='8080')
+        port_2 = DimensionDataIpAddress(begin='8899',
+                                              end='9023')
+        port_collection = [port_1, port_2]
+
+        # Create IP Address List
+        success = self.driver.ex_create_portlist(
+            ex_network_domain=net_domain, name=name,
+            description=description,
+            port_collection=port_collection
+        )
+
+        self.assertTrue(success)
+
+    def test_ex_create_portlist(self):
+        name = "Test_Port_List"
+        description = "Test Description"
+
+        net_domain = self.driver.ex_list_network_domains()[0]
+
+        port_1 = DimensionDataPort(begin='8080')
+        port_2 = DimensionDataIpAddress(begin='8899',
+                                              end='9023')
+        port_collection = [port_1, port_2]
+
+        child_port_1 = DimensionDataChildPortList(
+            id="333174a2-ae74-4658-9e56-50fc90e086cf", name='test port 1')
+        child_port_2 = DimensionDataChildPortList(
+            id="311174a2-ae74-4658-9e56-50fc90e04444", name='test port 2')
+        child_ports = [child_port_1, child_port_2]
+
+        # Create IP Address List
+        success = self.driver.ex_create_portlist(
+            ex_network_domain=net_domain, name=name,
+            description=description,
+            port_collection=port_collection,
+            child_portlist_list=child_ports
+        )
+
+        self.assertTrue(success)
+
+    def test_ex_create_portlist_STR(self):
+        name = "Test_Port_List"
+        description = "Test Description"
+
+        net_domain = self.driver.ex_list_network_domains()[0]
+
+        port_1 = DimensionDataPort(begin='8080')
+        port_2 = DimensionDataIpAddress(begin='8899',
+                                              end='9023')
+        port_collection = [port_1, port_2]
+
+        child_port_1 = DimensionDataChildPortList(
+            id="333174a2-ae74-4658-9e56-50fc90e086cf", name='test port 1')
+        child_port_2 = DimensionDataChildPortList(
+            id="311174a2-ae74-4658-9e56-50fc90e04444", name='test port 2')
+        child_ports_ids = [child_port_1.id, child_port_2.id]
+
+        # Create IP Address List
+        success = self.driver.ex_create_portlist(
+            ex_network_domain=net_domain.id, name=name,
+            description=description,
+            port_collection=port_collection,
+            child_portlist_list=child_ports_ids
+        )
+
+        self.assertTrue(success)
+
+    def test_ex_edit_portlist(self):
+        net_domain = self.driver.ex_list_network_domains()[0]
+        portlist = self.driver.ex_list_portlist(net_domain)[0]
+
+        description = "Test Description"
+
+        port_1 = DimensionDataPort(begin='8080')
+        port_2 = DimensionDataIpAddress(begin='8899',
+                                        end='9023')
+        port_collection = [port_1, port_2]
+
+        child_port_1 = DimensionDataChildPortList(
+            id="333174a2-ae74-4658-9e56-50fc90e086cf", name='test port 1')
+        child_port_2 = DimensionDataChildPortList(
+            id="311174a2-ae74-4658-9e56-50fc90e04444", name='test port 2')
+        child_ports = [child_port_1.id, child_port_2.id]
+
+        # Create IP Address List
+        success = self.driver.ex_edit_portlist(
+            ex_portlist=portlist,
+            description=description,
+            port_collection=port_collection,
+            child_portlist_list=child_ports
+        )
+        self.assertTrue(success)
+
+    def test_ex_edit_portlist_STR(self):
+        portlist_id = "484174a2-ae74-4658-9e56-50fc90e086cf"
+        description = "Test Description"
+
+        port_1 = DimensionDataPort(begin='8080')
+        port_2 = DimensionDataIpAddress(begin='8899',
+                                        end='9023')
+        port_collection = [port_1, port_2]
+
+        child_port_1 = DimensionDataChildPortList(
+            id="333174a2-ae74-4658-9e56-50fc90e086cf", name='test port 1')
+        child_port_2 = DimensionDataChildPortList(
+            id="311174a2-ae74-4658-9e56-50fc90e04444", name='test port 2')
+        child_ports_ids = [child_port_1.id, child_port_2.id]
+
+        # Create IP Address List
+        success = self.driver.ex_edit_portlist(
+            ex_portlist=portlist_id,
+            description=description,
+            port_collection=port_collection,
+            child_portlist_list=child_ports_ids
+        )
+        self.assertTrue(success)
+
+    def test_ex_delete_portlist(self):
+        net_domain = self.driver.ex_list_network_domains()[0]
+        portlist = self.driver.ex_list_portlist(net_domain)[0]
+
+        success = self.driver.ex_delete_portlist(
+            ex_portlist=portlist)
+        self.assertTrue(success)
+
+    def test_ex_delete_portlist_STR(self):
+        net_domain = self.driver.ex_list_network_domains()[0]
+        portlist = self.driver.ex_list_portlist(net_domain)[0]
+
+        success = self.driver.ex_delete_portlist(
+            ex_portlist=portlist.id)
+        self.assertTrue(success)
+
 
 class InvalidRequestError(Exception):
     def __init__(self, tag):
@@ -1203,6 +1770,12 @@ class DimensionDataMockRawResponse(MockRawResponse):
     def _oec_0_9_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_report_usageDetailed(self, method, url, body, headers):
         body = self.fixtures.load(
             'detailed_usage_report.csv'
+        )
+        return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
+
+    def _oec_0_9_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_auditlog(self, method, url, body, headers):
+        body = self.fixtures.load(
+            'audit_log.csv'
         )
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
@@ -1373,12 +1946,12 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
         )
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server(self, method, url, body, headers):
         body = self.fixtures.load(
             'server.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_deleteServer(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_deleteServer(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}deleteServer":
             raise InvalidRequestError(request.tag)
@@ -1386,7 +1959,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_deleteServer.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_deleteServer_INPROGRESS(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_deleteServer_INPROGRESS(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}deleteServer":
             raise InvalidRequestError(request.tag)
@@ -1394,7 +1967,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_deleteServer_RESOURCEBUSY.xml')
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_rebootServer(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_rebootServer(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}rebootServer":
             raise InvalidRequestError(request.tag)
@@ -1402,7 +1975,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_rebootServer.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_rebootServer_INPROGRESS(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_rebootServer_INPROGRESS(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}rebootServer":
             raise InvalidRequestError(request.tag)
@@ -1410,7 +1983,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_rebootServer_RESOURCEBUSY.xml')
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server(self, method, url, body, headers):
         if url.endswith('datacenterId=NA3'):
             body = self.fixtures.load(
                 'server_server_NA3.xml')
@@ -1420,19 +1993,19 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_server.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_PAGESIZE50(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_PAGESIZE50(self, method, url, body, headers):
         if not url.endswith('pageSize=50'):
             raise ValueError("pageSize is not set as expected")
         body = self.fixtures.load(
             'server_server.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_EMPTY(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_EMPTY(self, method, url, body, headers):
         body = self.fixtures.load(
             'server_server_paginated_empty.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_PAGED_THEN_EMPTY(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_PAGED_THEN_EMPTY(self, method, url, body, headers):
         if 'pageNumber=2' in url:
             body = self.fixtures.load(
                 'server_server_paginated_empty.xml')
@@ -1442,7 +2015,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
                 'server_server_paginated.xml')
             return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_PAGINATED(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_PAGINATED(self, method, url, body, headers):
         if 'pageNumber=2' in url:
             body = self.fixtures.load(
                 'server_server.xml')
@@ -1452,12 +2025,12 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
                 'server_server_paginated.xml')
             return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_PAGINATEDEMPTY(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_PAGINATEDEMPTY(self, method, url, body, headers):
         body = self.fixtures.load(
             'server_server_paginated_empty.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_ALLFILTERS(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_ALLFILTERS(self, method, url, body, headers):
         (_, params) = url.split('?')
         parameters = params.split('&')
         for parameter in parameters:
@@ -1490,13 +2063,13 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_server.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_antiAffinityRule(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_antiAffinityRule(self, method, url, body, headers):
         body = self.fixtures.load(
             'server_antiAffinityRule_list.xml'
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_antiAffinityRule_ALLFILTERS(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_antiAffinityRule_ALLFILTERS(self, method, url, body, headers):
         (_, params) = url.split('?')
         parameters = params.split('&')
         for parameter in parameters:
@@ -1516,7 +2089,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_antiAffinityRule_PAGINATED(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_antiAffinityRule_PAGINATED(self, method, url, body, headers):
         if 'pageNumber=2' in url:
             body = self.fixtures.load(
                 'server_antiAffinityRule_list.xml')
@@ -1526,7 +2099,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
                 'server_antiAffinityRule_list_PAGINATED.xml')
             return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_infrastructure_datacenter(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_infrastructure_datacenter(self, method, url, body, headers):
         if url.endswith('id=NA9'):
             body = self.fixtures.load(
                 'infrastructure_datacenter_NA9.xml')
@@ -1536,7 +2109,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'infrastructure_datacenter.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_infrastructure_datacenter_ALLFILTERS(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_infrastructure_datacenter_ALLFILTERS(self, method, url, body, headers):
         if url.endswith('id=NA9'):
             body = self.fixtures.load(
                 'infrastructure_datacenter_NA9.xml')
@@ -1546,7 +2119,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'infrastructure_datacenter.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_updateVmwareTools(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_updateVmwareTools(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}updateVmwareTools":
             raise InvalidRequestError(request.tag)
@@ -1554,7 +2127,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_updateVmwareTools.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_startServer(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_startServer(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}startServer":
             raise InvalidRequestError(request.tag)
@@ -1562,7 +2135,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_startServer.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_startServer_INPROGRESS(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_startServer_INPROGRESS(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}startServer":
             raise InvalidRequestError(request.tag)
@@ -1570,7 +2143,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_startServer_INPROGRESS.xml')
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_shutdownServer(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_shutdownServer(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}shutdownServer":
             raise InvalidRequestError(request.tag)
@@ -1578,7 +2151,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_shutdownServer.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_shutdownServer_INPROGRESS(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_shutdownServer_INPROGRESS(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}shutdownServer":
             raise InvalidRequestError(request.tag)
@@ -1586,7 +2159,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_shutdownServer_INPROGRESS.xml')
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_resetServer(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_resetServer(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}resetServer":
             raise InvalidRequestError(request.tag)
@@ -1594,7 +2167,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_resetServer.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_powerOffServer(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_powerOffServer(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}powerOffServer":
             raise InvalidRequestError(request.tag)
@@ -1602,7 +2175,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_powerOffServer.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_powerOffServer_INPROGRESS(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_powerOffServer_INPROGRESS(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}powerOffServer":
             raise InvalidRequestError(request.tag)
@@ -1610,12 +2183,12 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_powerOffServer_INPROGRESS.xml')
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_networkDomain(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_networkDomain(self, method, url, body, headers):
         body = self.fixtures.load(
             'network_networkDomain.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_networkDomain_ALLFILTERS(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_networkDomain_ALLFILTERS(self, method, url, body, headers):
         (_, params) = url.split('?')
         parameters = params.split('&')
         for parameter in parameters:
@@ -1634,12 +2207,12 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_networkDomain.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_vlan(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_vlan(self, method, url, body, headers):
         body = self.fixtures.load(
             'network_vlan.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_vlan_ALLFILTERS(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_vlan_ALLFILTERS(self, method, url, body, headers):
         (_, params) = url.split('?')
         parameters = params.split('&')
         for parameter in parameters:
@@ -1662,7 +2235,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_vlan.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_deployServer(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_deployServer(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}deployServer":
             raise InvalidRequestError(request.tag)
@@ -1693,12 +2266,12 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_deployServer.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_e75ead52_692f_4314_8725_c8a4f4d13a87(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_server_e75ead52_692f_4314_8725_c8a4f4d13a87(self, method, url, body, headers):
         body = self.fixtures.load(
             'server_server_e75ead52_692f_4314_8725_c8a4f4d13a87.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_deployNetworkDomain(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_deployNetworkDomain(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}deployNetworkDomain":
             raise InvalidRequestError(request.tag)
@@ -1706,17 +2279,17 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_deployNetworkDomain.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_networkDomain_8cdfd607_f429_4df6_9352_162cfc0891be(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_networkDomain_8cdfd607_f429_4df6_9352_162cfc0891be(self, method, url, body, headers):
         body = self.fixtures.load(
             'network_networkDomain_8cdfd607_f429_4df6_9352_162cfc0891be.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_networkDomain_8cdfd607_f429_4df6_9352_162cfc0891be_ALLFILTERS(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_networkDomain_8cdfd607_f429_4df6_9352_162cfc0891be_ALLFILTERS(self, method, url, body, headers):
         body = self.fixtures.load(
             'network_networkDomain_8cdfd607_f429_4df6_9352_162cfc0891be.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_editNetworkDomain(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_editNetworkDomain(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}editNetworkDomain":
             raise InvalidRequestError(request.tag)
@@ -1724,7 +2297,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_editNetworkDomain.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_deleteNetworkDomain(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_deleteNetworkDomain(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}deleteNetworkDomain":
             raise InvalidRequestError(request.tag)
@@ -1732,7 +2305,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_deleteNetworkDomain.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_deployVlan(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_deployVlan(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}deployVlan":
             raise InvalidRequestError(request.tag)
@@ -1740,12 +2313,12 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_deployVlan.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_vlan_0e56433f_d808_4669_821d_812769517ff8(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_vlan_0e56433f_d808_4669_821d_812769517ff8(self, method, url, body, headers):
         body = self.fixtures.load(
             'network_vlan_0e56433f_d808_4669_821d_812769517ff8.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_editVlan(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_editVlan(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}editVlan":
             raise InvalidRequestError(request.tag)
@@ -1753,7 +2326,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_editVlan.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_deleteVlan(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_deleteVlan(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}deleteVlan":
             raise InvalidRequestError(request.tag)
@@ -1761,7 +2334,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_deleteVlan.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_expandVlan(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_expandVlan(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}expandVlan":
             raise InvalidRequestError(request.tag)
@@ -1769,7 +2342,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_expandVlan.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_addPublicIpBlock(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_addPublicIpBlock(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}addPublicIpBlock":
             raise InvalidRequestError(request.tag)
@@ -1777,22 +2350,22 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_addPublicIpBlock.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_publicIpBlock_4487241a_f0ca_11e3_9315_d4bed9b167ba(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_publicIpBlock_4487241a_f0ca_11e3_9315_d4bed9b167ba(self, method, url, body, headers):
         body = self.fixtures.load(
             'network_publicIpBlock_4487241a_f0ca_11e3_9315_d4bed9b167ba.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_publicIpBlock(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_publicIpBlock(self, method, url, body, headers):
         body = self.fixtures.load(
             'network_publicIpBlock.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_publicIpBlock_9945dc4a_bdce_11e4_8c14_b8ca3a5d9ef8(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_publicIpBlock_9945dc4a_bdce_11e4_8c14_b8ca3a5d9ef8(self, method, url, body, headers):
         body = self.fixtures.load(
             'network_publicIpBlock_9945dc4a_bdce_11e4_8c14_b8ca3a5d9ef8.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_removePublicIpBlock(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_removePublicIpBlock(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}removePublicIpBlock":
             raise InvalidRequestError(request.tag)
@@ -1800,12 +2373,12 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_removePublicIpBlock.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_firewallRule(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_firewallRule(self, method, url, body, headers):
         body = self.fixtures.load(
             'network_firewallRule.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_createFirewallRule(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_createFirewallRule(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}createFirewallRule":
             raise InvalidRequestError(request.tag)
@@ -1813,12 +2386,12 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_createFirewallRule.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_firewallRule_d0a20f59_77b9_4f28_a63b_e58496b73a6c(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_firewallRule_d0a20f59_77b9_4f28_a63b_e58496b73a6c(self, method, url, body, headers):
         body = self.fixtures.load(
             'network_firewallRule_d0a20f59_77b9_4f28_a63b_e58496b73a6c.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_editFirewallRule(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_editFirewallRule(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}editFirewallRule":
             raise InvalidRequestError(request.tag)
@@ -1826,7 +2399,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_editFirewallRule.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_deleteFirewallRule(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_deleteFirewallRule(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}deleteFirewallRule":
             raise InvalidRequestError(request.tag)
@@ -1834,7 +2407,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_deleteFirewallRule.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_createNatRule(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_createNatRule(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}createNatRule":
             raise InvalidRequestError(request.tag)
@@ -1842,17 +2415,17 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_createNatRule.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_natRule(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_natRule(self, method, url, body, headers):
         body = self.fixtures.load(
             'network_natRule.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_natRule_2187a636_7ebb_49a1_a2ff_5d617f496dce(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_natRule_2187a636_7ebb_49a1_a2ff_5d617f496dce(self, method, url, body, headers):
         body = self.fixtures.load(
             'network_natRule_2187a636_7ebb_49a1_a2ff_5d617f496dce.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_deleteNatRule(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_deleteNatRule(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}deleteNatRule":
             raise InvalidRequestError(request.tag)
@@ -1860,7 +2433,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'network_deleteNatRule.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_addNic(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_addNic(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}addNic":
             raise InvalidRequestError(request.tag)
@@ -1868,7 +2441,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_addNic.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_removeNic(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_removeNic(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}removeNic":
             raise InvalidRequestError(request.tag)
@@ -1876,7 +2449,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_removeNic.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_disableServerMonitoring(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_disableServerMonitoring(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}disableServerMonitoring":
             raise InvalidRequestError(request.tag)
@@ -1884,7 +2457,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_disableServerMonitoring.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_enableServerMonitoring(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_enableServerMonitoring(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}enableServerMonitoring":
             raise InvalidRequestError(request.tag)
@@ -1892,7 +2465,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_enableServerMonitoring.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_changeServerMonitoringPlan(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_changeServerMonitoringPlan(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}changeServerMonitoringPlan":
             raise InvalidRequestError(request.tag)
@@ -1900,57 +2473,57 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_changeServerMonitoringPlan.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_osImage(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_osImage(self, method, url, body, headers):
         body = self.fixtures.load(
             'image_osImage.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_osImage_c14b1a46_2428_44c1_9c1a_b20e6418d08c(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_osImage_c14b1a46_2428_44c1_9c1a_b20e6418d08c(self, method, url, body, headers):
         body = self.fixtures.load(
             'image_osImage_c14b1a46_2428_44c1_9c1a_b20e6418d08c.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_osImage_6b4fb0c7_a57b_4f58_b59c_9958f94f971a(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_osImage_6b4fb0c7_a57b_4f58_b59c_9958f94f971a(self, method, url, body, headers):
         body = self.fixtures.load(
             'image_osImage_6b4fb0c7_a57b_4f58_b59c_9958f94f971a.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_osImage_5234e5c7_01de_4411_8b6e_baeb8d91cf5d(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_osImage_5234e5c7_01de_4411_8b6e_baeb8d91cf5d(self, method, url, body, headers):
         body = self.fixtures.load(
             'image_osImage_BAD_REQUEST.xml')
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_osImage_2ffa36c8_1848_49eb_b4fa_9d908775f68c(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_osImage_2ffa36c8_1848_49eb_b4fa_9d908775f68c(self, method, url, body, headers):
         body = self.fixtures.load(
             'image_osImage_BAD_REQUEST.xml')
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_osImage_FAKE_IMAGE_ID(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_osImage_FAKE_IMAGE_ID(self, method, url, body, headers):
         body = self.fixtures.load(
             'image_osImage_BAD_REQUEST.xml')
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_customerImage(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_customerImage(self, method, url, body, headers):
         body = self.fixtures.load(
             'image_customerImage.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_customerImage_5234e5c7_01de_4411_8b6e_baeb8d91cf5d(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_customerImage_5234e5c7_01de_4411_8b6e_baeb8d91cf5d(self, method, url, body, headers):
         body = self.fixtures.load(
             'image_customerImage_5234e5c7_01de_4411_8b6e_baeb8d91cf5d.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_customerImage_2ffa36c8_1848_49eb_b4fa_9d908775f68c(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_customerImage_2ffa36c8_1848_49eb_b4fa_9d908775f68c(self, method, url, body, headers):
         body = self.fixtures.load(
             'image_customerImage_2ffa36c8_1848_49eb_b4fa_9d908775f68c.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_customerImage_FAKE_IMAGE_ID(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_image_customerImage_FAKE_IMAGE_ID(self, method, url, body, headers):
         body = self.fixtures.load(
             'image_customerImage_BAD_REQUEST.xml')
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_reconfigureServer(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_reconfigureServer(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}reconfigureServer":
             raise InvalidRequestError(request.tag)
@@ -1958,22 +2531,22 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'server_reconfigureServer.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_cleanServer(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_cleanServer(self, method, url, body, headers):
         body = self.fixtures.load(
             'server_cleanServer.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_addDisk(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_addDisk(self, method, url, body, headers):
         body = self.fixtures.load(
             'server_addDisk.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_removeDisk(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_server_removeDisk(self, method, url, body, headers):
         body = self.fixtures.load(
             'server_removeDisk.xml')
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_createTagKey(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_createTagKey(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}createTagKey":
             raise InvalidRequestError(request.tag)
@@ -1995,7 +2568,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_createTagKey_ALLPARAMS(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_createTagKey_ALLPARAMS(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}createTagKey":
             raise InvalidRequestError(request.tag)
@@ -2017,24 +2590,24 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_createTagKey_BADREQUEST(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_createTagKey_BADREQUEST(self, method, url, body, headers):
         body = self.fixtures.load(
             'tag_createTagKey_BADREQUEST.xml')
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_tagKey(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_tagKey(self, method, url, body, headers):
         body = self.fixtures.load(
             'tag_tagKey_list.xml'
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_tagKey_SINGLE(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_tagKey_SINGLE(self, method, url, body, headers):
         body = self.fixtures.load(
             'tag_tagKey_list_SINGLE.xml'
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_tagKey_ALLFILTERS(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_tagKey_ALLFILTERS(self, method, url, body, headers):
         (_, params) = url.split('?')
         parameters = params.split('&')
         for parameter in parameters:
@@ -2056,19 +2629,19 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_tagKey_d047c609_93d7_4bc5_8fc9_732c85840075(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_tagKey_d047c609_93d7_4bc5_8fc9_732c85840075(self, method, url, body, headers):
         body = self.fixtures.load(
             'tag_tagKey_5ab77f5f_5aa9_426f_8459_4eab34e03d54.xml'
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_tagKey_d047c609_93d7_4bc5_8fc9_732c85840075_NOEXIST(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_tagKey_d047c609_93d7_4bc5_8fc9_732c85840075_NOEXIST(self, method, url, body, headers):
         body = self.fixtures.load(
             'tag_tagKey_5ab77f5f_5aa9_426f_8459_4eab34e03d54_BADREQUEST.xml'
         )
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_editTagKey_NAME(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_editTagKey_NAME(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}editTagKey":
             raise InvalidRequestError(request.tag)
@@ -2089,7 +2662,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_editTagKey_NOTNAME(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_editTagKey_NOTNAME(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}editTagKey":
             raise InvalidRequestError(request.tag)
@@ -2110,13 +2683,13 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_editTagKey_NOCHANGE(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_editTagKey_NOCHANGE(self, method, url, body, headers):
         body = self.fixtures.load(
             'tag_editTagKey_BADREQUEST.xml'
         )
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_deleteTagKey(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_deleteTagKey(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}deleteTagKey":
             raise InvalidRequestError(request.tag)
@@ -2125,13 +2698,13 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_deleteTagKey_NOEXIST(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_deleteTagKey_NOEXIST(self, method, url, body, headers):
         body = self.fixtures.load(
             'tag_deleteTagKey_BADREQUEST.xml'
         )
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_applyTags(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_applyTags(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}applyTags":
             raise InvalidRequestError(request.tag)
@@ -2154,7 +2727,7 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_applyTags_NOVALUE(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_applyTags_NOVALUE(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}applyTags":
             raise InvalidRequestError(request.tag)
@@ -2177,13 +2750,13 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_applyTags_NOTAGKEY(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_applyTags_NOTAGKEY(self, method, url, body, headers):
         body = self.fixtures.load(
             'tag_applyTags_BADREQUEST.xml'
         )
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_removeTags(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_removeTags(self, method, url, body, headers):
         request = ET.fromstring(body)
         if request.tag != "{urn:didata.com:api:cloud:types}removeTags":
             raise InvalidRequestError(request.tag)
@@ -2192,19 +2765,19 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_removeTags_NOTAG(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_removeTags_NOTAG(self, method, url, body, headers):
         body = self.fixtures.load(
             'tag_removeTag_BADREQUEST.xml'
         )
         return (httplib.BAD_REQUEST, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_tag(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_tag(self, method, url, body, headers):
         body = self.fixtures.load(
             'tag_tag_list.xml'
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
 
-    def _caas_2_2_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_tag_ALLPARAMS(self, method, url, body, headers):
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_tag_tag_ALLPARAMS(self, method, url, body, headers):
         (_, params) = url.split('?')
         parameters = params.split('&')
         for parameter in parameters:
@@ -2233,6 +2806,196 @@ class DimensionDataMockHttp(StorageMockHttp, MockHttp):
             'tag_tag_list.xml'
         )
         return (httplib.OK, body, {}, httplib.responses[httplib.OK])
+
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_ipAddressList(
+            self, method, url, body, headers):
+        body = self.fixtures.load('ip_address_lists.xml')
+        return httplib.OK, body, {}, httplib.responses[httplib.OK]
+
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_ipAddressList_FILTERBYNAME(
+            self, method, url, body, headers):
+        body = self.fixtures.load('ip_address_lists_FILTERBYNAME.xml')
+        return httplib.OK, body, {}, httplib.responses[httplib.OK]
+
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_createIpAddressList(
+            self, method, url, body, headers):
+        request = ET.fromstring(body)
+        if request.tag != "{urn:didata.com:api:cloud:types}" \
+                          "createIpAddressList":
+            raise InvalidRequestError(request.tag)
+
+        net_domain = findtext(request, 'networkDomainId', TYPES_URN)
+        if net_domain is None:
+            raise ValueError("Network Domain should not be empty")
+
+        name = findtext(request, 'name', TYPES_URN)
+        if name is None:
+            raise ValueError("Name should not be empty")
+
+        ip_version = findtext(request, 'ipVersion', TYPES_URN)
+        if ip_version is None:
+            raise ValueError("IP Version should not be empty")
+
+        ip_address_col_required = findall(request, 'ipAddress', TYPES_URN)
+        child_ip_address_required = findall(request, 'childIpAddressListId',
+                                            TYPES_URN)
+
+        if 0 == len(ip_address_col_required) and \
+                0 == len(child_ip_address_required):
+            raise ValueError("At least one ipAddress element or "
+                             "one childIpAddressListId element must be "
+                             "provided.")
+
+        if ip_address_col_required[0].get('begin') is None:
+            raise ValueError("IP Address should not be empty")
+
+        body = self.fixtures.load(
+            'ip_address_list_create.xml'
+        )
+        return httplib.OK, body, {}, httplib.responses[httplib.OK]
+
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_editIpAddressList(
+            self, method, url, body, headers):
+        request = ET.fromstring(body)
+        if request.tag != "{urn:didata.com:api:cloud:types}" \
+                          "editIpAddressList":
+            raise InvalidRequestError(request.tag)
+
+        ip_address_list = request.get('id')
+        if ip_address_list is None:
+            raise ValueError("IpAddressList ID should not be empty")
+
+        name = findtext(request, 'name', TYPES_URN)
+        if name is not None:
+            raise ValueError("Name should not exists in request")
+
+        ip_version = findtext(request, 'ipVersion', TYPES_URN)
+        if ip_version is not None:
+            raise ValueError("IP Version should not exists in request")
+
+        ip_address_col_required = findall(request, 'ipAddress', TYPES_URN)
+        child_ip_address_required = findall(request, 'childIpAddressListId',
+                                            TYPES_URN)
+
+        if 0 == len(ip_address_col_required) and \
+                0 == len(child_ip_address_required):
+            raise ValueError("At least one ipAddress element or "
+                             "one childIpAddressListId element must be "
+                             "provided.")
+
+        if ip_address_col_required[0].get('begin') is None:
+            raise ValueError("IP Address should not be empty")
+
+        body = self.fixtures.load(
+            'ip_address_list_edit.xml'
+        )
+        return httplib.OK, body, {}, httplib.responses[httplib.OK]
+
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_deleteIpAddressList(
+            self, method, url, body, headers):
+        request = ET.fromstring(body)
+        if request.tag != "{urn:didata.com:api:cloud:types}" \
+                          "deleteIpAddressList":
+            raise InvalidRequestError(request.tag)
+
+        ip_address_list = request.get('id')
+        if ip_address_list is None:
+            raise ValueError("IpAddressList ID should not be empty")
+
+        body = self.fixtures.load(
+            'ip_address_list_delete.xml'
+        )
+
+        return httplib.OK, body, {}, httplib.responses[httplib.OK]
+
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_portList(
+            self, method, url, body, headers):
+        body = self.fixtures.load(
+            'port_list_lists.xml'
+        )
+
+        return httplib.OK, body, {}, httplib.responses[httplib.OK]
+
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_portList_c8c92ea3_2da8_4d51_8153_f39bec794d69(
+            self, method, url, body, headers):
+        body = self.fixtures.load(
+            'port_list_get.xml'
+        )
+
+        return httplib.OK, body, {}, httplib.responses[httplib.OK]
+
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_createPortList(
+            self, method, url, body, headers):
+
+        request = ET.fromstring(body)
+        if request.tag != "{urn:didata.com:api:cloud:types}" \
+                          "createPortList":
+            raise InvalidRequestError(request.tag)
+
+        net_domain = findtext(request, 'networkDomainId', TYPES_URN)
+        if net_domain is None:
+            raise ValueError("Network Domain should not be empty")
+
+        ports_required = findall(request, 'port', TYPES_URN)
+        child_port_list_required = findall(request, 'childPortListId',
+                                           TYPES_URN)
+
+        if 0 == len(ports_required) and \
+                0 == len(child_port_list_required):
+            raise ValueError("At least one port element or one "
+                             "childPortListId element must be provided")
+
+        if ports_required[0].get('begin') is None:
+            raise ValueError("PORT begin value should not be empty")
+
+        body = self.fixtures.load(
+            'port_list_create.xml'
+        )
+
+        return httplib.OK, body, {}, httplib.responses[httplib.OK]
+
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_editPortList(
+            self, method, url, body, headers):
+
+        request = ET.fromstring(body)
+        if request.tag != "{urn:didata.com:api:cloud:types}" \
+                          "editPortList":
+            raise InvalidRequestError(request.tag)
+
+        ports_required = findall(request, 'port', TYPES_URN)
+        child_port_list_required = findall(request, 'childPortListId',
+                                           TYPES_URN)
+
+        if 0 == len(ports_required) and \
+                0 == len(child_port_list_required):
+            raise ValueError("At least one port element or one "
+                             "childPortListId element must be provided")
+
+        if ports_required[0].get('begin') is None:
+            raise ValueError("PORT begin value should not be empty")
+
+        body = self.fixtures.load(
+            'port_list_edit.xml'
+        )
+
+        return httplib.OK, body, {}, httplib.responses[httplib.OK]
+
+    def _caas_2_3_8a8f6abc_2745_4d8a_9cbc_8dabe5a7d0e4_network_deletePortList(
+            self, method, url, body, headers):
+        request = ET.fromstring(body)
+        if request.tag != "{urn:didata.com:api:cloud:types}" \
+                          "deletePortList":
+            raise InvalidRequestError(request.tag)
+
+        port_list = request.get('id')
+        if port_list is None:
+            raise ValueError("Port List ID should not be empty")
+
+        body = self.fixtures.load(
+            'ip_address_list_delete.xml'
+        )
+
+        return httplib.OK, body, {}, httplib.responses[httplib.OK]
 
 if __name__ == '__main__':
     sys.exit(unittest.main())

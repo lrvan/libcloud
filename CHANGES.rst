@@ -1,11 +1,69 @@
 ﻿Changelog
 =========
 
+
 Changes in current version of Apache Libcloud
 ---------------------------------------------
 
 Compute
 ~~~~~~~
+
+- Added snapshot management to OVH compute
+  (GITHUB-897)
+  [Anthony Monthe]
+
+- [GCE] Support for HTTP(S) proxies with BackendServices
+  (GITHUB-856
+  [Tom Melendez]
+
+Storage
+~~~~~~~
+
+- [GCS] Fixed some google_storage.py URL cleaning
+  (GITHUB-901)
+  [Scott Crunkleton]
+
+Changes in Apache Libcloud 1.3.0
+--------------------------------
+
+General
+~~~~~~~
+
+- Introduced new base API for instantiating drivers
+  (GITHUB-822)
+  [Anthony Shaw]
+
+- Added certificate path for SLES12/OpenSUSE12
+  (GITHUB-884)
+  [Michael Calmer]
+
+- Deprecate DigitalOcean v1 API support in favour of v2 API
+  (GITHUB-889)(GITHUB-892)
+  [Andrew Starr-Bochicchio]
+
+- Deprecate RunAbove cloud drivers in favour of new OVH cloud driver
+  (GITHUB-891)
+  [Anthony Monthe]
+
+
+Compute
+~~~~~~~
+
+- Fix reporting function for detailed admin logs in Dimension Data Driver
+  (GITHUB-898)
+  [Anthony Shaw]
+
+- Added edit firewall functionality to Dimension Data driver
+  (GITHUB-893)
+  [Samuel Chong]
+
+- Bugfix - Fixed listing nodes issue in Python 3
+  (LIBCLOUD-858, GITHUB-894)
+  [Fahri Cihan Demirci]
+
+- Added FCU (Flexible Compute Unit) support to the Outscale driver.
+  (GITHUB-890)
+  [Javier M. Mellid]
 
 - [google compute] Add "WINDOWS" guestOsFeatures option.
   (GITHUB-861)
@@ -38,6 +96,10 @@ Compute
 
 Container
 ~~~~~~~~~
+
+- Introduced new Racher driver
+  (GITHUB-876)
+  [Mario Loria]
 
 - Fixed bug in Docker util library for fetching images from the docker hub API. API
   was returning 301 and redirects were not being followed.

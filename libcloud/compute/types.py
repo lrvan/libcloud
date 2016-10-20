@@ -144,6 +144,7 @@ class Provider(Type):
     OPSOURCE = 'opsource'
     OUTSCALE_INC = 'outscale_inc'
     OUTSCALE_SAS = 'outscale_sas'
+    OVH = 'ovh'
     PACKET = 'packet'
     PROFIT_BRICKS = 'profitbricks'
     RACKSPACE = 'rackspace'
